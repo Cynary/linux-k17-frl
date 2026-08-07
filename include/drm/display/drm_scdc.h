@@ -29,6 +29,11 @@
 #define SCDC_SOURCE_VERSION 0x02
 
 #define SCDC_UPDATE_0 0x10
+#define  SCDC_LIP_UPDATE (1 << 7)
+#define  SCDC_RSED_UPDATE (1 << 6)
+#define  SCDC_FLT_UPDATE (1 << 5)
+#define  SCDC_FRL_START (1 << 4)
+#define  SCDC_SOURCE_TEST_UPDATE (1 << 3)
 #define  SCDC_READ_REQUEST_TEST (1 << 2)
 #define  SCDC_CED_UPDATE (1 << 1)
 #define  SCDC_STATUS_UPDATE (1 << 0)
@@ -46,7 +51,24 @@
 #define SCDC_CONFIG_0 0x30
 #define  SCDC_READ_REQUEST_ENABLE (1 << 0)
 
+#define SCDC_CONFIG_1 0x31
+#define  SCDC_FRL_RATE_MASK		0xF
+#define  SCDC_FRL_DISABLE		0
+#define  SCDC_FRL_RATE_3GBPS_3LANES	1
+#define  SCDC_FRL_RATE_6GBPS_3LANES	2
+#define  SCDC_FRL_RATE_6GBPS_4LANES	3
+#define  SCDC_FRL_RATE_8GBPS_4LANES	4
+#define  SCDC_FRL_RATE_10GBPS_4LANES	5
+#define  SCDC_FRL_RATE_12GBPS_4LANES	6
+#define  SCDC_FRL_RATE_16GBPS_4LANES	7
+#define  SCDC_FRL_RATE_20GBPS_4LANES	8
+#define  SCDC_FRL_RATE_24GBPS_4LANES	9
+#define  SCDC_FFE_LEVELS_SHIFT		4
+
 #define SCDC_STATUS_FLAGS_0 0x40
+#define  SCDC_DSC_DECODE_FAIL (1 << 7)
+#define  SCDC_FLT_READY (1 << 6)
+#define  SCDC_LANE3_LOCKED (1 << 4)
 #define  SCDC_CH2_LOCK (1 << 3)
 #define  SCDC_CH1_LOCK (1 << 2)
 #define  SCDC_CH0_LOCK (1 << 1)
@@ -54,6 +76,10 @@
 #define  SCDC_CLOCK_DETECT (1 << 0)
 
 #define SCDC_STATUS_FLAGS_1 0x41
+
+#define SCDC_STATUS_FLAGS_2 0x42
+#define  SCDC_LN_0_2_LTP_MASK 0xF
+#define  SCDC_LN_1_3_LTP_MASK (0xF << 4)
 
 #define SCDC_ERR_DET_0_L 0x50
 #define SCDC_ERR_DET_0_H 0x51

@@ -36,6 +36,20 @@ ssize_t drm_scdc_read(struct i2c_adapter *adapter, u8 offset, void *buffer,
 ssize_t drm_scdc_write(struct i2c_adapter *adapter, u8 offset,
 		       const void *buffer, size_t size);
 
+enum drm_scdc_frl_ltp {
+	SCDC_FRL_NO_LTP = 0,
+	SCDC_FRL_LTP1,
+	SCDC_FRL_LTP2,
+	SCDC_FRL_LTP3,
+	SCDC_FRL_LTP4,
+	SCDC_FRL_LTP5,
+	SCDC_FRL_LTP6,
+	SCDC_FRL_LTP7,
+	SCDC_FRL_LTP8,
+	SCDC_FRL_CHNG_FFE = 0xE,
+	SCDC_FRL_CHNG_RATE = 0xF,
+};
+
 /**
  * drm_scdc_readb - read a single byte from SCDC
  * @adapter: I2C adapter
@@ -76,5 +90,13 @@ bool drm_scdc_get_scrambling_status(struct drm_connector *connector);
 
 bool drm_scdc_set_scrambling(struct drm_connector *connector, bool enable);
 bool drm_scdc_set_high_tmds_clock_ratio(struct drm_connector *connector, bool set);
+u8 drm_scdc_read_update_flags(struct i2c_adapter *adapter);
+int drm_scdc_clear_update_flags(struct i2c_adapter *adapter, u8 update_flags);
+u8 drm_scdc_read_status_flags(struct i2c_adapter *adapter);
+int drm_scdc_config_frl(struct i2c_adapter *adapter, int frl_rate,
+			int num_lanes, int ffe_levels);
+int drm_scdc_disable_frl(struct i2c_adapter *adapter);
+int drm_scdc_get_ltp(struct i2c_adapter *adapter,
+		     enum drm_scdc_frl_ltp ltp[4]);
 
 #endif

@@ -276,3 +276,215 @@ bool drm_scdc_set_high_tmds_clock_ratio(struct drm_connector *connector,
 	return true;
 }
 EXPORT_SYMBOL(drm_scdc_set_high_tmds_clock_ratio);
+
+/**
+ * drm_scdc_read_update_flags - read the SCDC update flags
+ * @adapter: I2C adapter for DDC channel
+ *
+ * Returns:
+ * 8bit SCDC update
+ */
+u8 drm_scdc_read_update_flags(struct i2c_adapter *adapter)
+{
+	u8 update = 0;
+	int ret;
+
+	ret = drm_scdc_readb(adapter, SCDC_UPDATE_0, &update);
+	if (ret < 0)
+		DRM_DEBUG_KMS("Failed to read scdc update: %d\n", ret);
+
+	return update;
+}
+EXPORT_SYMBOL(drm_scdc_read_update_flags);
+
+/**
+ * drm_scdc_clear_update_flags - Clears the given update flag bits by writing 1
+ * @adapter: I2C adapter for DDC channel
+ * @update_flags: update flag bits to be cleared
+ *
+ * Returns:
+ * 0 on success, negative error code otherwise.
+ */
+int drm_scdc_clear_update_flags(struct i2c_adapter *adapter, u8 update_flags)
+{
+	int ret;
+
+	/* Read Request Test is the only update flag the source cannot clear */
+	if (update_flags & SCDC_READ_REQUEST_TEST) {
+		DRM_DEBUG_KMS("SCDC Update flag/s 0x%x cannot be cleared\n",
+			      update_flags);
+		return -EINVAL;
+	}
+
+	ret = drm_scdc_writeb(adapter, SCDC_UPDATE_0, update_flags);
+	if (ret < 0) {
+		DRM_DEBUG_KMS("Failed to clear SCDC Update flag/s\n");
+		return ret;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(drm_scdc_clear_update_flags);
+
+/**
+ * drm_scdc_read_status_flags - Read the status flags from offset 0x40
+ * @adapter: I2C adapter for DDC channel
+ *
+ * Returns:
+ * 8 bit value read from the offset 0x40
+ */
+u8 drm_scdc_read_status_flags(struct i2c_adapter *adapter)
+{
+	u8 update = 0;
+	int ret;
+
+	ret = drm_scdc_readb(adapter, SCDC_STATUS_FLAGS_0, &update);
+	if (ret < 0)
+		DRM_DEBUG_KMS("Failed to read scdc status flag: %d\n", ret);
+
+	return update;
+}
+EXPORT_SYMBOL(drm_scdc_read_status_flags);
+
+/**
+ * drm_scdc_config_frl - configure the sink for starting FRL training
+ * @adapter: I2C adapter for DDC channel
+ * @frl_rate: FRL rate per lane in Gbps (3, 6, 8, 10, 12, 16, 20 or 24).
+ * @num_lanes: no. of lanes required, can be either 3 or 4.
+ * @ffe_levels: max TxFFE level supported for the given FRL rate;
+ *              0-3 for rates up to 12 Gbps, 0-7 for 16/20/24 Gbps.
+ *              A prohibited value is clamped to 0 (per spec).
+ *
+ * Returns:
+ * 0 if the SCDC offsets for FRL training are successfully configured,
+ * negative error code otherwise.
+ */
+int drm_scdc_config_frl(struct i2c_adapter *adapter, int frl_rate,
+			int num_lanes, int ffe_levels)
+{
+	u8 write_buf = 0;
+	int ret;
+
+	if (num_lanes > 4 || num_lanes < 3) {
+		DRM_DEBUG_KMS("No. of lanes can be 3 or 4 only\n");
+		return -EINVAL;
+	}
+	if (ffe_levels > 7 || (frl_rate < 16 && ffe_levels > 3)) {
+		DRM_DEBUG_KMS("Prohibited Max FFE level %d, defaulting to Max FFE level 0\n",
+			      ffe_levels);
+		ffe_levels = 0;
+	}
+
+	switch (frl_rate) {
+	case 3:
+		write_buf |= (num_lanes == 3) ? SCDC_FRL_RATE_3GBPS_3LANES : 0;
+		break;
+	case 6:
+		write_buf |= (num_lanes == 3) ? SCDC_FRL_RATE_6GBPS_3LANES :
+			     SCDC_FRL_RATE_6GBPS_4LANES;
+		break;
+	case 8:
+		write_buf |= (num_lanes == 4) ? SCDC_FRL_RATE_8GBPS_4LANES : 0;
+		break;
+	case 10:
+		write_buf |= (num_lanes == 4) ? SCDC_FRL_RATE_10GBPS_4LANES : 0;
+		break;
+	case 12:
+		write_buf |= (num_lanes == 4) ? SCDC_FRL_RATE_12GBPS_4LANES : 0;
+		break;
+	case 16:
+		write_buf |= (num_lanes == 4) ? SCDC_FRL_RATE_16GBPS_4LANES : 0;
+		break;
+	case 20:
+		write_buf |= (num_lanes == 4) ? SCDC_FRL_RATE_20GBPS_4LANES : 0;
+		break;
+	case 24:
+		write_buf |= (num_lanes == 4) ? SCDC_FRL_RATE_24GBPS_4LANES : 0;
+		break;
+	default:
+		DRM_DEBUG_KMS("Invalid FRL rate =%dGbps\n", frl_rate);
+		return -EINVAL;
+	}
+
+	if (!write_buf) {
+		DRM_DEBUG_KMS("Invalid FRL rate and lane combination\n");
+		return -EINVAL;
+	}
+
+	write_buf |= (ffe_levels << SCDC_FFE_LEVELS_SHIFT);
+
+	ret = drm_scdc_writeb(adapter, SCDC_CONFIG_1, write_buf);
+	if (ret < 0) {
+		DRM_DEBUG_KMS("Failed to write SCDC config: %d\n", ret);
+		return ret;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(drm_scdc_config_frl);
+
+/**
+ * drm_scdc_disable_frl - Clear FRL Rate indicating TMDS
+ * @adapter: I2C adapter for DDC channel
+ *
+ * Returns:
+ * 0 if the FRL Rate is successfully reset, negative error code otherwise.
+ */
+int drm_scdc_disable_frl(struct i2c_adapter *adapter)
+{
+	u8 buf = 0;
+	int ret;
+
+	ret = drm_scdc_readb(adapter, SCDC_CONFIG_1, &buf);
+	if (ret < 0) {
+		DRM_DEBUG_KMS("Failed to read SCDC_CONFIG_1\n");
+		return ret;
+	}
+
+	buf &= ~SCDC_FRL_RATE_MASK;
+
+	ret = drm_scdc_writeb(adapter, SCDC_CONFIG_1, buf);
+	if (ret < 0) {
+		DRM_DEBUG_KMS("Failed to reset FRL rate\n");
+		return ret;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(drm_scdc_disable_frl);
+
+/**
+ * drm_scdc_get_ltp - get the Link training patterns for the 4 lanes
+ * @adapter: I2C adapter for DDC channel
+ * @ltp: pointer array for reading Link training patterns for the 4 lanes.
+ *
+ * Returns:
+ * 0 on success also filling ltp out argument, negative error code otherwise.
+ */
+int drm_scdc_get_ltp(struct i2c_adapter *adapter,
+		     enum drm_scdc_frl_ltp ltp[4])
+{
+	u8 buf;
+	int ret;
+
+	ret = drm_scdc_readb(adapter, SCDC_STATUS_FLAGS_1, &buf);
+	if (ret < 0) {
+		DRM_DEBUG_KMS("failed to read link training pattern for lanes 0/1 ret = %d\n", ret);
+		return ret;
+	}
+
+	ltp[0] = buf & SCDC_LN_0_2_LTP_MASK;
+	ltp[1] = (buf & SCDC_LN_1_3_LTP_MASK) >> 4;
+
+	ret = drm_scdc_readb(adapter, SCDC_STATUS_FLAGS_2, &buf);
+	if (ret < 0) {
+		DRM_DEBUG_KMS("failed to read link training pattern for lanes 2/3 ret = %d\n", ret);
+		return ret;
+	}
+
+	ltp[2] = buf & SCDC_LN_0_2_LTP_MASK;
+	ltp[3] = (buf & SCDC_LN_1_3_LTP_MASK) >> 4;
+
+	return 0;
+}
+EXPORT_SYMBOL(drm_scdc_get_ltp);
