@@ -3472,7 +3472,8 @@ static void intel_ddi_enable_hdmi(struct intel_atomic_state *state,
 
 	intel_vrr_transcoder_enable(crtc_state);
 
-	intel_ddi_enable_transcoder_and_vblank(state, encoder, crtc_state);
+	if (DISPLAY_VER(display) < 14)
+		intel_ddi_enable_transcoder_and_vblank(state, encoder, crtc_state);
 
 	if (!intel_hdmi_handle_sink_scrambling(encoder, connector,
 					       crtc_state->hdmi_high_tmds_clock_ratio,
@@ -3574,6 +3575,9 @@ static void intel_ddi_enable_hdmi(struct intel_atomic_state *state,
 	}
 
 	intel_ddi_buf_enable(encoder, buf_ctl);
+
+	if (DISPLAY_VER(display) >= 14)
+		intel_ddi_enable_transcoder_and_vblank(state, encoder, crtc_state);
 
 	intel_hdmi_poll_for_scrambling_enable(crtc_state, connector);
 }
