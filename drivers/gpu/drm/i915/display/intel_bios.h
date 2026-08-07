@@ -102,6 +102,7 @@ int intel_bios_hdmi_max_tmds_clock(const struct intel_bios_encoder_data *devdata
 void intel_bios_for_each_encoder(struct intel_display *display,
 				 void (*func)(struct intel_display *display,
 					      const struct intel_bios_encoder_data *devdata));
+int intel_bios_hdmi_max_frl_rate(struct intel_encoder *encoder);
 
 void intel_bios_debugfs_register(struct intel_display *display);
 

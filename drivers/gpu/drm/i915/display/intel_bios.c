@@ -2734,6 +2734,43 @@ static bool is_port_valid(struct intel_display *display, enum port port)
 	return true;
 }
 
+static int _intel_bios_hdmi_max_frl_rate(const struct intel_bios_encoder_data *devdata)
+{
+	struct intel_display *display = devdata->display;
+
+	if (display->vbt.version >= 237 &&
+	    devdata->child.hdmi_max_frl_rate_valid) {
+		switch (devdata->child.hdmi_max_frl_rate) {
+		default:
+		case HDMI_MAX_FRL_RATE_PLATFORM:
+			drm_dbg_kms(display->drm,
+				    "HDMI limited to support only TMDS modes\n");
+			return 0;
+		case HDMI_MAX_FRL_RATE_3G:
+			return 3000000;
+		case HDMI_MAX_FRL_RATE_6G:
+			return 6000000;
+		case HDMI_MAX_FRL_RATE_8G:
+			return 8000000;
+		case HDMI_MAX_FRL_RATE_10G:
+			return 10000000;
+		case HDMI_MAX_FRL_RATE_12G:
+			return 12000000;
+		}
+	}
+
+	/*
+	 * When hdmi_max_frl_rate_valid is 0
+	 * Don't consider the hdmi_max_frl_rate for
+	 * limiting the FRL Rates on FRL-capable displays
+	 */
+	if (display->vbt.version >= 237 &&
+	    display->platform.meteorlake)
+		return 12000000;
+
+	return 0;
+}
+
 static void print_ddi_port(const struct intel_bios_encoder_data *devdata)
 {
 	struct intel_display *display = devdata->display;
@@ -2741,6 +2778,7 @@ static void print_ddi_port(const struct intel_bios_encoder_data *devdata)
 	bool is_dvi, is_hdmi, is_dp, is_edp, is_dsi, is_crt, supports_typec_usb, supports_tbt;
 	int dp_boost_level, dp_max_link_rate, hdmi_boost_level, hdmi_level_shift, max_tmds_clock;
 	enum port port;
+	int hdmi_max_frl_rate;
 
 	port = intel_bios_encoder_port(devdata);
 	if (port == PORT_NONE)
@@ -2805,6 +2843,12 @@ static void print_ddi_port(const struct intel_bios_encoder_data *devdata)
 		drm_dbg_kms(display->drm,
 			    "Port %c VBT DP max link rate: %d\n",
 			    port_name(port), dp_max_link_rate);
+
+	hdmi_max_frl_rate = _intel_bios_hdmi_max_frl_rate(devdata);
+	if (hdmi_max_frl_rate)
+		drm_dbg_kms(display->drm,
+			    "VBT HDMI max frl rate for port %c: %d\n",
+			    port_name(port), hdmi_max_frl_rate);
 
 	/*
 	 * FIXME need to implement support for VBT
@@ -3878,4 +3922,13 @@ void intel_bios_debugfs_register(struct intel_display *display)
 {
 	debugfs_create_file("i915_vbt", 0444, display->drm->debugfs_root,
 			    display, &intel_bios_vbt_fops);
+}
+
+int intel_bios_hdmi_max_frl_rate(struct intel_encoder *encoder)
+{
+	struct intel_display *display = to_intel_display(encoder);
+	const struct intel_bios_encoder_data *devdata;
+
+	devdata = intel_bios_encoder_data_lookup(display, encoder->port);
+	return _intel_bios_hdmi_max_frl_rate(devdata);
 }
