@@ -64,6 +64,7 @@
 #include "intel_hdmi.h"
 #include "intel_link_bw.h"
 #include "intel_lspcon.h"
+#include "intel_lt_phy.h"
 #include "intel_panel.h"
 #include "intel_pfit.h"
 #include "intel_snps_phy.h"
@@ -1921,6 +1922,78 @@ hdmi_port_tmds_clock_valid(struct intel_hdmi *hdmi,
 	return MODE_OK;
 }
 
+/*
+ * Returns the Fixed rate in 10 Kbps per lane required to support given
+ * pixel rate.
+ * Returns 0 for pixel rate demanding > 12 Gbps
+ */
+static int intel_hdmi_frl_required_bitrate(int pixel_rate_10kbps)
+{
+	/*
+	 * 3 lane configurations:
+	 * 3 Gbps * 3 = 9 Gbps; 6 Gbps * 3 = 18 Gbps.
+	 *
+	 * 4 lane configurations:
+	 * 6 Gbps * 4 = 24 Gbps; 8 Gbps * 4 = 32 Gbp;
+	 * 10 Gbps * 4 = 40 Gbps; 12 Gbps * 4 = 48 Gbps.
+	 */
+	if (pixel_rate_10kbps <= FRL_GBPS_TO_10KBPS(9))
+		return FRL_GBPS_TO_10KBPS(3);
+
+	if (pixel_rate_10kbps > FRL_GBPS_TO_10KBPS(9) &&
+	    pixel_rate_10kbps <= FRL_GBPS_TO_10KBPS(18))
+		return FRL_GBPS_TO_10KBPS(6);
+
+	if (pixel_rate_10kbps > FRL_GBPS_TO_10KBPS(18) &&
+	    pixel_rate_10kbps <= FRL_GBPS_TO_10KBPS(24))
+		return FRL_GBPS_TO_10KBPS(6);
+
+	if (pixel_rate_10kbps > FRL_GBPS_TO_10KBPS(24) &&
+	    pixel_rate_10kbps <= FRL_GBPS_TO_10KBPS(32))
+		return FRL_GBPS_TO_10KBPS(8);
+
+	if (pixel_rate_10kbps > FRL_GBPS_TO_10KBPS(32) &&
+	    pixel_rate_10kbps <= FRL_GBPS_TO_10KBPS(40))
+		return FRL_GBPS_TO_10KBPS(10);
+
+	if (pixel_rate_10kbps > FRL_GBPS_TO_10KBPS(40) &&
+	    pixel_rate_10kbps <= FRL_GBPS_TO_10KBPS(48))
+		return FRL_GBPS_TO_10KBPS(12);
+
+	/*
+	 * pixel rate more than 48 Gbps rate, means more than
+	 * 12 Gbps x 4 lanes. Such a rate not possible with FRL.
+	 */
+	return 0;
+}
+
+static enum drm_mode_status
+hdmi_port_frl_clock_valid(struct intel_hdmi *hdmi, int clock)
+{
+	struct intel_display *display = to_intel_display(hdmi);
+
+	if (DISPLAY_VER(display) >= 35)
+		return intel_lt_phy_hdmi_frl_rate_valid(clock);
+
+	if (DISPLAY_VER(display) >= 14)
+		return intel_cx0_phy_hdmi_frl_rate_valid(hdmi, clock);
+
+	return MODE_OK;
+}
+
+static enum drm_mode_status
+hdmi_port_clock_valid(struct intel_hdmi *hdmi,
+		      int clock, bool respect_downstream_limits,
+		      bool has_hdmi_sink, bool frl_mode)
+{
+	if (frl_mode)
+		return hdmi_port_frl_clock_valid(hdmi, clock);
+
+	return hdmi_port_tmds_clock_valid(hdmi, clock,
+					  respect_downstream_limits,
+					  has_hdmi_sink);
+}
+
 int intel_hdmi_tmds_clock(int clock, int bpc,
 			  enum intel_output_format sink_format)
 {
@@ -1984,6 +2057,29 @@ static bool intel_hdmi_sink_bpc_possible(struct drm_connector *_connector,
 	}
 }
 
+static
+int intel_hdmi_frl_clock(int clock, int bpc, enum intel_output_format sink_format)
+{
+	int pixel_rate_kbps;
+
+	if (sink_format == INTEL_OUTPUT_FORMAT_YCBCR420)
+		clock /= 2;
+
+	pixel_rate_kbps = clock * bpc * 3;
+
+	/* find the closest frl bit rate */
+	return intel_hdmi_frl_required_bitrate(pixel_rate_kbps / 10);
+}
+
+static
+int intel_hdmi_clock(int clock, int bpc, enum intel_output_format sink_format, bool frl_mode)
+{
+	if (frl_mode)
+		return intel_hdmi_frl_clock(clock, bpc, sink_format);
+
+	return intel_hdmi_tmds_clock(clock, bpc, sink_format);
+}
+
 static enum drm_mode_status
 intel_hdmi_mode_clock_valid(struct drm_connector *_connector, int clock,
 			    bool has_hdmi_sink,
@@ -2001,7 +2097,7 @@ intel_hdmi_mode_clock_valid(struct drm_connector *_connector, int clock,
 	 * least one color depth is accepted.
 	 */
 	for (bpc = 12; bpc >= 8; bpc -= 2) {
-		int tmds_clock = intel_hdmi_tmds_clock(clock, bpc, sink_format);
+		int hdmi_clock = intel_hdmi_clock(clock, bpc, sink_format, false);
 
 		if (!intel_hdmi_source_bpc_possible(display, bpc))
 			continue;
@@ -2010,7 +2106,7 @@ intel_hdmi_mode_clock_valid(struct drm_connector *_connector, int clock,
 						  sink_format))
 			continue;
 
-		status = hdmi_port_tmds_clock_valid(hdmi, tmds_clock, true, has_hdmi_sink);
+		status = hdmi_port_clock_valid(hdmi, hdmi_clock, true, has_hdmi_sink, false);
 		if (status == MODE_OK)
 			return MODE_OK;
 	}

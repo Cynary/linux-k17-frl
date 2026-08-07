@@ -79,4 +79,7 @@ void hsw_read_infoframe(struct intel_encoder *encoder,
 void intel_hdmi_poll_for_scrambling_enable(const struct intel_crtc_state *crtc_state,
 					   struct drm_connector *_connector);
 
+/* FRL rate per lane (Gbps) -> PHY PLL table units (10 kbps) */
+#define FRL_GBPS_TO_10KBPS(rate)	((rate) * 100000)
+
 #endif /* __INTEL_HDMI_H__ */
