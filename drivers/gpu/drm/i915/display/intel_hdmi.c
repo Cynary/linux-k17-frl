@@ -62,6 +62,7 @@
 #include "intel_hdcp_regs.h"
 #include "intel_hdcp_shim.h"
 #include "intel_hdmi.h"
+#include "intel_hdmi_frl_dfm.h"
 #include "intel_link_bw.h"
 #include "intel_lspcon.h"
 #include "intel_lt_phy.h"
@@ -2325,13 +2326,71 @@ static int intel_hdmi_compute_tmds_clock(struct intel_encoder *encoder,
 	return 0;
 }
 
+static int
+intel_hdmi_compute_frl_config(struct intel_encoder *encoder,
+			      struct intel_crtc_state *crtc_state)
+{
+	int ret;
+
+	ret = intel_hdmi_frl_dfm_compute_config(encoder, crtc_state);
+	if (ret) {
+		memset(&crtc_state->frl, 0, sizeof(crtc_state->frl));
+		return ret;
+	}
+
+	/*
+	 * TODO
+	 * 1. Calculate condition for Reseource based scheduling enable.
+	 * Disabling resource based scheduling for now.
+	 * 2. Active Character buffer threshold depends on cd clock bw.
+	 * Setting default value of 0.
+	 */
+	crtc_state->frl.rsrc_sched_en = false;
+	crtc_state->frl.active_char_buf_threshold = 0;
+
+	return 0;
+}
+
+static int
+intel_hdmi_compute_frl_clock(struct intel_encoder *encoder,
+			     struct intel_crtc_state *crtc_state)
+{
+	struct intel_hdmi *hdmi = enc_to_intel_hdmi(encoder);
+	int max_bpc = max(crtc_state->pipe_bpp / 3, 8);
+	int port_clock;
+	int bpc;
+
+	for (bpc = max_bpc; bpc >= 8; bpc -= 2) {
+		int ret;
+
+		if (!hdmi_bpc_possible(crtc_state, bpc))
+			continue;
+
+		crtc_state->pipe_bpp = bpc * 3;
+
+		ret = intel_hdmi_compute_frl_config(encoder, crtc_state);
+		if (ret)
+			continue;
+
+		/* Port clock for FRL rates is bitrate in 10Kbps */
+		port_clock = FRL_GBPS_TO_10KBPS(crtc_state->frl.required_rate);
+
+		if (hdmi_port_frl_clock_valid(hdmi, port_clock) == MODE_OK) {
+			crtc_state->port_clock = port_clock;
+			return 0;
+		}
+	}
+
+	return -EINVAL;
+}
+
 static int intel_hdmi_compute_clock(struct intel_encoder *encoder,
 				    struct intel_crtc_state *crtc_state,
 				    bool respect_downstream_limits,
 				    bool enable_frl)
 {
 	if (enable_frl)
-		return -EINVAL;
+		return intel_hdmi_compute_frl_clock(encoder, crtc_state);
 
 	return intel_hdmi_compute_tmds_clock(encoder, crtc_state, respect_downstream_limits);
 }
