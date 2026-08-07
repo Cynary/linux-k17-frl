@@ -6,6 +6,7 @@
 #include <linux/kernel.h>
 
 #include <drm/drm_connector.h>
+#include <drm/drm_print.h>
 
 #include "intel_de.h"
 #include "intel_display_driver.h"
@@ -743,4 +744,85 @@ void intel_hdmi_frl_dfm_read(struct intel_crtc_state *crtc_state)
 	val = intel_de_read(display, TRANS_HDMI_FRL_DFMTHRSH(display, cpu_trans));
 	crtc_state->frl.tb_threshold_min =
 		REG_FIELD_GET(TB_MIN_THESHOLD_MASK, val);
+}
+
+static u32
+get_drm_color_format(enum intel_output_format output_format)
+{
+	switch (output_format) {
+	case INTEL_OUTPUT_FORMAT_RGB:
+		return DRM_OUTPUT_COLOR_FORMAT_RGB444;
+	case INTEL_OUTPUT_FORMAT_YCBCR420:
+		return DRM_OUTPUT_COLOR_FORMAT_YCBCR420;
+	case INTEL_OUTPUT_FORMAT_YCBCR444:
+		return DRM_OUTPUT_COLOR_FORMAT_YCBCR444;
+	default:
+		return DRM_OUTPUT_COLOR_FORMAT_RGB444;
+	}
+}
+
+int intel_hdmi_frl_dfm_compute_config(struct intel_encoder *encoder,
+				      struct intel_crtc_state *crtc_state)
+{
+	static const int rate[] = {9, 18, 24, 32, 40, 48};
+	static const int audio_freq_hz[] = {192000, 176400, 96000, 88200, 48000};
+	struct intel_hdmi_frl_dfm frl_dfm = {0};
+	struct intel_hdmi *intel_hdmi = enc_to_intel_hdmi(encoder);
+	struct intel_display *display = to_intel_display(crtc_state);
+	struct drm_display_mode *adjusted_mode = &crtc_state->hw.adjusted_mode;
+	int max_rate = intel_hdmi->max_frl_rate;
+	bool can_support_frl_mode = false;
+	int i, j;
+
+	/* Fill mode related input params */
+	frl_dfm.config.pixel_clock_nominal_khz = adjusted_mode->clock;
+	frl_dfm.config.hactive = adjusted_mode->hdisplay;
+	frl_dfm.config.hblank = adjusted_mode->htotal - adjusted_mode->hdisplay;
+
+	/* Fill color related input params */
+	frl_dfm.config.bpc = crtc_state->pipe_bpp / 3;
+	frl_dfm.config.color_format = get_drm_color_format(crtc_state->output_format);
+
+	/*
+	 * Check if the resolution can be supported in FRL mode.
+	 * We try with the lowest FRL rate first — the minimum rate that
+	 * satisfies DFM requirements — for better SI margin and lower power.
+	 */
+	for (i = 0; i < ARRAY_SIZE(rate); i++) {
+		if (rate[i] > max_rate)
+			continue;
+		/* Fill the bw related input parameters */
+		frl_dfm.config.lanes = rate[i] < 24 ? 3 : 4;
+		frl_dfm.config.bit_rate_kbps = (rate[i] * 1000000) / frl_dfm.config.lanes;
+		for (j = 0; j < ARRAY_SIZE(audio_freq_hz); j++) {
+			frl_dfm.config.audio_hz = audio_freq_hz[j];
+			frl_dfm.config.audio_channels = 8;
+
+			if (intel_hdmi_frl_dfm_nondsc_requirement_met(&frl_dfm)) {
+				can_support_frl_mode = true;
+				break;
+			}
+		}
+
+		if (can_support_frl_mode)
+			break;
+	}
+
+	if (!can_support_frl_mode)
+		return -EINVAL;
+
+	/* Fill crtc_state frl DFM output params */
+	crtc_state->frl.required_lanes = frl_dfm.config.lanes;
+	crtc_state->frl.required_rate = frl_dfm.config.bit_rate_kbps / 1000000;
+	crtc_state->frl.tb_borrowed = frl_dfm.params.tb_borrowed;
+	crtc_state->frl.tb_actual = frl_dfm.params.tb_borrowed / 2;
+	drm_dbg_kms(display->drm, "FRL DFM config: tb_borrowed = %d, tb_actual = %d\n",
+		    crtc_state->frl.tb_borrowed, crtc_state->frl.tb_actual);
+
+	if (frl_dfm.params.tb_borrowed && (frl_dfm.params.tb_borrowed / 2) <= 492)
+		crtc_state->frl.tb_threshold_min = 492 - (frl_dfm.params.tb_borrowed / 2);
+	else
+		crtc_state->frl.tb_threshold_min = 492;
+
+	return 0;
 }

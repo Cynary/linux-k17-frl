@@ -8,6 +8,7 @@
 #include <linux/types.h>
 
 struct intel_crtc_state;
+struct intel_encoder;
 
 /* All the input config needed to compute DFM requirements */
 struct intel_hdmi_frl_dfm_input_config {
@@ -119,5 +120,7 @@ intel_hdmi_frl_dfm_dsc_requirement_met(struct intel_hdmi_frl_dfm *frl_dfm);
 
 void intel_hdmi_frl_dfm_write(const struct intel_crtc_state *crtc_state);
 void intel_hdmi_frl_dfm_read(struct intel_crtc_state *crtc_state);
+int intel_hdmi_frl_dfm_compute_config(struct intel_encoder *encoder,
+				      struct intel_crtc_state *crtc_state);
 
 #endif
