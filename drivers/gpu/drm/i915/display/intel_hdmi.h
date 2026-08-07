@@ -80,6 +80,7 @@ void intel_hdmi_poll_for_scrambling_enable(const struct intel_crtc_state *crtc_s
 					   struct drm_connector *_connector);
 
 void intel_hdmi_frl_cfg_write(const struct intel_crtc_state *crtc_state);
+void intel_hdmi_frl_get_config(struct intel_crtc_state *crtc_state);
 
 /* FRL rate per lane (Gbps) -> PHY PLL table units (10 kbps) */
 #define FRL_GBPS_TO_10KBPS(rate)	((rate) * 100000)
