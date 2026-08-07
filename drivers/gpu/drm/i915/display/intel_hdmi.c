@@ -3555,6 +3555,7 @@ static int clear_scdc_update_flags(struct intel_encoder *encoder, u8 flags)
 
 static bool
 intel_hdmi_frl_prepare_lts2(struct intel_encoder *encoder,
+			    const struct intel_crtc_state *crtc_state,
 			    int frl_rate, int frl_lanes,
 			    int ffe_level)
 {
@@ -3580,7 +3581,12 @@ intel_hdmi_frl_prepare_lts2(struct intel_encoder *encoder,
 	if ((get_frl_update_flags(encoder) & SCDC_FLT_UPDATE))
 		clear_scdc_update_flags(encoder, SCDC_FLT_UPDATE);
 
-	/* #TODO: Source shall program TxFFE = 0 for all active lanes */
+	/*
+	 * Program PHY to TxFFE0 on every lane before the sink
+	 * starts evaluating LTP patterns. ffe_level[] has already been
+	 * cleared by intel_hdmi_reset_frl_config().
+	 */
+	encoder->set_signal_levels(encoder, crtc_state);
 
 	if (drm_scdc_config_frl(adapter, frl_rate, frl_lanes, ffe_level) < 0) {
 		drm_dbg_kms(display->drm,
@@ -3615,9 +3621,11 @@ intel_hdmi_train_lanes(struct intel_encoder *encoder,
 		       int ffe_level)
 {
 	struct intel_display *display = to_intel_display(encoder);
+	struct intel_hdmi *intel_hdmi = enc_to_intel_hdmi(encoder);
 	enum transcoder trans = crtc_state->cpu_transcoder;
 	int num_lanes = crtc_state->frl.required_lanes;
 	enum drm_scdc_frl_ltp ltp[4];
+	bool ffe_changed = false;
 	u32 write_buf = 0;
 	int lane;
 
@@ -3639,12 +3647,28 @@ intel_hdmi_train_lanes(struct intel_encoder *encoder,
 	for (lane = 0; lane < num_lanes; lane++) {
 		if (ltp[lane] >= SCDC_FRL_LTP1 && ltp[lane] <= SCDC_FRL_LTP8)
 			write_buf |= TRANS_HDMI_FRL_LTP(ltp[lane], lane);
-		/* #TODO handle FFE change */
-		else if (ltp[lane] == SCDC_FRL_CHNG_FFE)
-			continue;
+		else if (ltp[lane] == SCDC_FRL_CHNG_FFE) {
+			/*
+			 * During FRL link training: Sink requests Source
+			 * to step TxFFE up by one for this lane. Cap at the
+			 * advertised max FFE level.
+			 */
+			if (intel_hdmi->frl.ffe_level[lane] <
+			    intel_hdmi->frl.max_ffe_level) {
+				intel_hdmi->frl.ffe_level[lane]++;
+				ffe_changed = true;
+			}
+		}
 	}
 
 	intel_de_write(display, TRANS_HDMI_FRL_TRAIN(display, trans), write_buf);
+
+	/*
+	 * Reprogram per-lane PHY TxFFE before clearing FLT_update so the
+	 * sink evaluates the new preset on the next iteration.
+	 */
+	if (ffe_changed)
+		encoder->set_signal_levels(encoder, crtc_state);
 
 	clear_scdc_update_flags(encoder, SCDC_FLT_UPDATE);
 
@@ -3734,9 +3758,9 @@ static int get_next_frl_rate(int curr_rate_gbps)
 	return -EINVAL;
 }
 
-static int get_ffe_level(int rate_gbps)
+static int get_max_ffe_level(int rate_gbps)
 {
-	return 0;
+	return 3;
 }
 
 int intel_hdmi_start_frl(struct intel_encoder *encoder,
@@ -3748,7 +3772,7 @@ int intel_hdmi_start_frl(struct intel_encoder *encoder,
 	struct intel_connector *intel_connector = intel_hdmi->attached_connector;
 	struct drm_connector *connector = &intel_connector->base;
 	int req_rate = crtc_state->frl.required_lanes * crtc_state->frl.required_rate;
-	int ffe_level = get_ffe_level(req_rate);
+	int ffe_level = get_max_ffe_level(req_rate);
 	enum frl_lt_status status;
 	int next_rate = -EINVAL;
 
@@ -3768,6 +3792,7 @@ int intel_hdmi_start_frl(struct intel_encoder *encoder,
 	intel_hdmi->frl.max_ffe_level = ffe_level;
 
 	if (!intel_hdmi_frl_prepare_lts2(encoder,
+					 crtc_state,
 					 crtc_state->frl.required_rate,
 					 crtc_state->frl.required_lanes,
 					 ffe_level))
