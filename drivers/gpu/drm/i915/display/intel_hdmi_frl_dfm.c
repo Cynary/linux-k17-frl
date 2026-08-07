@@ -3,6 +3,7 @@
  * Copyright © 2022 Intel Corp
  */
 
+#include <linux/gcd.h>
 #include <linux/kernel.h>
 
 #include <drm/drm_connector.h>
@@ -709,6 +710,28 @@ bool intel_hdmi_frl_dfm_dsc_requirement_met(struct intel_hdmi_frl_dfm *frl_dfm)
 	return true;
 }
 
+static void frl_set_m_n(const struct intel_crtc_state *crtc_state)
+{
+	struct intel_display *display = to_intel_display(crtc_state);
+	enum transcoder cpu_transcoder = crtc_state->cpu_transcoder;
+
+	intel_de_write(display, PIPE_LINK_M1(display, cpu_transcoder),
+		       crtc_state->frl.link_m);
+	intel_de_write(display, PIPE_LINK_N1(display, cpu_transcoder),
+		       crtc_state->frl.link_n);
+}
+
+static void frl_get_m_n(struct intel_crtc_state *crtc_state)
+{
+	struct intel_display *display = to_intel_display(crtc_state);
+	enum transcoder cpu_transcoder = crtc_state->cpu_transcoder;
+
+	crtc_state->frl.link_m = intel_de_read(display, PIPE_LINK_M1(display, cpu_transcoder)) &
+				 DATA_LINK_M_N_MASK;
+	crtc_state->frl.link_n = intel_de_read(display, PIPE_LINK_N1(display, cpu_transcoder)) &
+				 DATA_LINK_M_N_MASK;
+}
+
 void intel_hdmi_frl_dfm_write(const struct intel_crtc_state *crtc_state)
 {
 	struct intel_display *display = to_intel_display(crtc_state);
@@ -718,6 +741,8 @@ void intel_hdmi_frl_dfm_write(const struct intel_crtc_state *crtc_state)
 
 	if (!crtc_state->frl.enable)
 		return;
+
+	frl_set_m_n(crtc_state);
 
 	reg = TRANS_HDMI_FRL_DFMWRCTL(display, cpu_trans);
 	val = TB_ACTUAL_OFFSET(crtc_state->frl.tb_actual);
@@ -736,6 +761,8 @@ void intel_hdmi_frl_dfm_read(struct intel_crtc_state *crtc_state)
 
 	if (!crtc_state->frl.enable)
 		return;
+
+	frl_get_m_n(crtc_state);
 
 	val = intel_de_read(display, TRANS_HDMI_FRL_DFMWRCTL(display, cpu_trans));
 	crtc_state->frl.tb_actual =
@@ -759,6 +786,38 @@ get_drm_color_format(enum intel_output_format output_format)
 	default:
 		return DRM_OUTPUT_COLOR_FORMAT_RGB444;
 	}
+}
+
+static void
+compute_frl_mn(struct intel_crtc_state *crtc_state, u32 ftb_avg_k)
+{
+	u64 ftb_avg, div_18_clk, gcd_val;
+	u32 link_m, link_n;
+
+	ftb_avg = ftb_avg_k * 1000;
+	div_18_clk = mult_frac(1000000000, crtc_state->frl.required_rate, 18);
+	gcd_val = gcd(ftb_avg, div_18_clk);
+
+	link_m = DIV_ROUND_UP_ULL(ftb_avg, gcd_val);
+	link_n = DIV_ROUND_UP_ULL(div_18_clk, gcd_val);
+
+	/*
+	 * PIPE_LINK_M1/N1 are 24-bit (DATA_LINK_M_N_MASK). Scale both
+	 * down preserving the ratio until they fit the register width.
+	 *
+	 * #TODO check if intel_reduce_m_n_ratio() can be exported.
+	 */
+	while (link_m > DATA_LINK_M_N_MASK ||
+	       link_n > DATA_LINK_M_N_MASK) {
+		link_m >>= 1;
+		link_n >>= 1;
+	}
+
+	crtc_state->frl.link_m = link_m;
+	crtc_state->frl.link_n = link_n;
+
+	/* Frl div 18 stored in Khz */
+	crtc_state->frl.div18 = DIV_ROUND_UP_ULL(div_18_clk, 1000);
 }
 
 int intel_hdmi_frl_dfm_compute_config(struct intel_encoder *encoder,
@@ -823,6 +882,11 @@ int intel_hdmi_frl_dfm_compute_config(struct intel_encoder *encoder,
 		crtc_state->frl.tb_threshold_min = 492 - (frl_dfm.params.tb_borrowed / 2);
 	else
 		crtc_state->frl.tb_threshold_min = 492;
+
+	compute_frl_mn(crtc_state, frl_dfm.params.ftb_avg_k);
+	drm_dbg_kms(display->drm, "FRL Clock: link_m = %dHz, link_n = %dHz, div18 = %dKHz\n",
+		    crtc_state->frl.link_m, crtc_state->frl.link_n,
+		    crtc_state->frl.div18);
 
 	return 0;
 }
