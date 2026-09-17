@@ -4246,6 +4246,9 @@ static void intel_ddi_get_config(struct intel_encoder *encoder,
 	if (encoder->type == INTEL_OUTPUT_EDP)
 		intel_edp_fixup_vbt_bpp(encoder, pipe_config->pipe_bpp);
 
+	if (intel_crtc_has_type(pipe_config, INTEL_OUTPUT_HDMI))
+		intel_hdmi_frl_get_config(pipe_config);
+
 	ddi_dotclock_get(pipe_config);
 
 	if (display->platform.geminilake || display->platform.broxton)

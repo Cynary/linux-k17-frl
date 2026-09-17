@@ -4107,7 +4107,15 @@ int intel_crtc_dotclock(const struct intel_crtc_state *pipe_config)
 {
 	int dotclock;
 
-	if (intel_crtc_has_dp_encoder(pipe_config))
+	if (pipe_config->frl.enable && pipe_config->frl.link_n) {
+		u64 div18 = div_u64((u64)pipe_config->frl.required_rate * 1000000000, 18);
+		u64 ftb_avg = div64_u64(div18 * pipe_config->frl.link_m,
+				      pipe_config->frl.link_n);
+
+		/* Undo the DFM 0.5% pixel clock tolerance and deep-color factor. */
+		dotclock = DIV_ROUND_CLOSEST_ULL(ftb_avg * 24 * 1000,
+					       (u64)pipe_config->pipe_bpp * 1005 * 1000);
+	} else if (intel_crtc_has_dp_encoder(pipe_config))
 		dotclock = intel_dotclock_calculate(pipe_config->port_clock,
 						    &pipe_config->dp_m_n);
 	else if (pipe_config->has_hdmi_sink && pipe_config->pipe_bpp > 24)
@@ -5427,6 +5435,11 @@ intel_pipe_config_compare(const struct intel_crtc_state *current_config,
 	if (current_config->vrr.enable || pipe_config->vrr.enable)
 		exclude_infoframes |= intel_hdmi_infoframe_enable(DP_SDP_ADAPTIVE_SYNC);
 
+	/* The opt-in HDMI VTEM slot is updated by the fastset path. */
+	if (display->platform.lunarlake && display->params.experimental_hdmi_vrr &&
+	    current_config->frl.enable && pipe_config->frl.enable)
+		exclude_infoframes |= intel_hdmi_infoframe_enable(HDMI_PACKET_TYPE_GAMUT_METADATA);
+
 	PIPE_CONF_CHECK_X_WITH_MASK(infoframes.enable, ~exclude_infoframes);
 	PIPE_CONF_CHECK_X(infoframes.gcp);
 	PIPE_CONF_CHECK_INFOFRAME(avi);
@@ -5510,7 +5523,7 @@ intel_pipe_config_compare(const struct intel_crtc_state *current_config,
 	PIPE_CONF_CHECK_BOOL(frl.enable);
 	PIPE_CONF_CHECK_BOOL(frl.rsrc_sched_en);
 	PIPE_CONF_CHECK_I(frl.required_lanes);
-	PIPE_CONF_CHECK_I(frl.tb_borrowed);
+	/* tb_borrowed is a software calculation; tb_actual is its register value. */
 	PIPE_CONF_CHECK_I(frl.tb_actual);
 	PIPE_CONF_CHECK_I(frl.active_char_buf_threshold);
 	PIPE_CONF_CHECK_I(frl.link_m);
