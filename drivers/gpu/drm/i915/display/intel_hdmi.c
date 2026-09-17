@@ -1254,6 +1254,41 @@ void intel_hdmi_fastset_infoframes(struct intel_encoder *encoder,
 			      &crtc_state->infoframes.drm);
 }
 
+static void intel_hdmi_write_vtem_experiment(struct intel_encoder *encoder,
+					     const struct intel_crtc_state *crtc_state)
+{
+	struct intel_display *display = to_intel_display(encoder);
+	const struct drm_display_mode *mode = &crtc_state->hw.adjusted_mode;
+	u32 packet[VIDEO_DIP_GMP_DATA_SIZE / sizeof(u32)] = {};
+	u8 *bytes = (u8 *)packet;
+	int refresh = drm_mode_vrefresh(mode);
+
+	if (!display->platform.lunarlake ||
+	    !display->params.experimental_hdmi_vrr ||
+	    !crtc_state->frl.enable || !crtc_state->vrr.enable)
+		return;
+
+	/* Single-packet VTEM, with the Intel reserved byte at offset 3. */
+	bytes[0] = 0x7f;
+	bytes[1] = 0xc0;
+	bytes[4] = 0x04; /* VFR */
+	bytes[6] = 1; /* HDMI organization */
+	bytes[8] = 1; /* VTEM data set */
+	bytes[10] = 4;
+	bytes[11] = 1; /* VRR_EN */
+	if (!drm_match_cea_mode(mode)) {
+		bytes[12] = mode->crtc_vsync_start - mode->crtc_vdisplay;
+		bytes[13] = (refresh >> 8) & 3;
+		bytes[14] = refresh & 0xff;
+	}
+
+	/* Experimental transport: verify actual receiver behavior, not just RAM. */
+	hsw_write_infoframe(encoder, crtc_state, HDMI_PACKET_TYPE_GAMUT_METADATA,
+			    packet, sizeof(packet));
+	drm_info(display->drm, "K17 VRR experiment: VTEM via GMP, %d Hz base\n",
+		 refresh);
+}
+
 static void hsw_set_infoframes(struct intel_encoder *encoder,
 			       bool enable,
 			       const struct intel_crtc_state *crtc_state,
@@ -1296,6 +1331,7 @@ static void hsw_set_infoframes(struct intel_encoder *encoder,
 	intel_write_infoframe(encoder, crtc_state,
 			      HDMI_INFOFRAME_TYPE_DRM,
 			      &crtc_state->infoframes.drm);
+	intel_hdmi_write_vtem_experiment(encoder, crtc_state);
 }
 
 void intel_dp_dual_mode_set_tmds_output(struct intel_hdmi *hdmi, bool enable)
@@ -2648,6 +2684,11 @@ int intel_hdmi_compute_config(struct intel_encoder *encoder,
 	}
 
 	intel_vrr_compute_config(pipe_config, conn_state);
+	if (display->platform.lunarlake && display->params.experimental_hdmi_vrr &&
+	    pipe_config->frl.enable && pipe_config->vrr.enable)
+		pipe_config->infoframes.enable |=
+			intel_hdmi_infoframe_enable(HDMI_PACKET_TYPE_GAMUT_METADATA);
+
 
 	intel_hdmi_compute_gcp_infoframe(encoder, pipe_config,
 					 conn_state);
@@ -2693,6 +2734,7 @@ intel_hdmi_unset_edid(struct drm_connector *_connector)
 	struct intel_hdmi *intel_hdmi = intel_attached_hdmi(connector);
 
 	intel_hdmi->has_sink_hdmi_21 = false;
+	drm_connector_set_vrr_capable_property(&connector->base, false);
 
 	intel_hdmi->dp_dual_mode.type = DRM_DP_DUAL_MODE_NONE;
 	intel_hdmi->dp_dual_mode.max_tmds_clock = 0;
@@ -2851,6 +2893,8 @@ intel_hdmi_set_edid(struct drm_connector *_connector)
 	drm_edid_connector_update(&connector->base, drm_edid);
 
 	connector->detect_edid = drm_edid;
+	drm_connector_set_vrr_capable_property(&connector->base,
+					       intel_vrr_is_capable(connector));
 
 	if (drm_edid_is_digital(drm_edid)) {
 		intel_hdmi_dp_dual_mode_detect(&connector->base);
@@ -3002,6 +3046,7 @@ intel_hdmi_add_properties(struct intel_hdmi *intel_hdmi, struct drm_connector *_
 	struct intel_connector *connector = to_intel_connector(_connector);
 	struct intel_display *display = to_intel_display(intel_hdmi);
 
+	drm_connector_attach_vrr_capable_property(&connector->base);
 	intel_attach_force_audio_property(&connector->base);
 	intel_attach_broadcast_rgb_property(&connector->base);
 	intel_attach_aspect_ratio_property(&connector->base);

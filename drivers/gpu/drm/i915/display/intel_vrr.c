@@ -47,6 +47,14 @@ bool intel_vrr_is_capable(struct intel_connector *connector)
 	 * Adaptive Sync or Variable Refresh Rate end user experience.
 	 */
 	switch (connector->base.connector_type) {
+	case DRM_MODE_CONNECTOR_HDMIA:
+		return display->platform.lunarlake &&
+			display->params.experimental_hdmi_vrr &&
+			info->hdmi.max_frl_rate_per_lane &&
+			info->hdmi.vrr_cap.supported &&
+			info->hdmi.vrr_cap.vrr_min &&
+			info->hdmi.vrr_cap.vrr_max > info->hdmi.vrr_cap.vrr_min;
+
 	case DRM_MODE_CONNECTOR_eDP:
 		if (!connector->panel.vbt.vrr)
 			return false;
@@ -81,13 +89,25 @@ bool intel_vrr_is_capable(struct intel_connector *connector)
 	return info->monitor_range.max_vfreq - info->monitor_range.min_vfreq > 10;
 }
 
+static int intel_vrr_min_refresh(const struct drm_connector *connector)
+{
+	if (connector->connector_type == DRM_MODE_CONNECTOR_HDMIA)
+		return connector->display_info.hdmi.vrr_cap.vrr_min;
+	return connector->display_info.monitor_range.min_vfreq;
+}
+
+static int intel_vrr_max_refresh(const struct drm_connector *connector)
+{
+	if (connector->connector_type == DRM_MODE_CONNECTOR_HDMIA)
+		return connector->display_info.hdmi.vrr_cap.vrr_max;
+	return connector->display_info.monitor_range.max_vfreq;
+}
+
 bool intel_vrr_is_in_range(struct intel_connector *connector, int vrefresh)
 {
-	const struct drm_display_info *info = &connector->base.display_info;
-
 	return intel_vrr_is_capable(connector) &&
-		vrefresh >= info->monitor_range.min_vfreq &&
-		vrefresh <= info->monitor_range.max_vfreq;
+		vrefresh >= intel_vrr_min_refresh(&connector->base) &&
+		vrefresh <= intel_vrr_max_refresh(&connector->base);
 }
 
 bool intel_vrr_possible(const struct intel_crtc_state *crtc_state)
@@ -355,11 +375,10 @@ static
 int intel_vrr_compute_vmax(struct intel_connector *connector,
 			   const struct drm_display_mode *adjusted_mode)
 {
-	const struct drm_display_info *info = &connector->base.display_info;
 	int vmax;
 
 	vmax = adjusted_mode->crtc_clock * 1000 /
-		(adjusted_mode->crtc_htotal * info->monitor_range.min_vfreq);
+		(adjusted_mode->crtc_htotal * intel_vrr_min_refresh(&connector->base));
 	vmax = max_t(int, vmax, adjusted_mode->crtc_vtotal);
 
 	return vmax;
@@ -422,8 +441,7 @@ intel_vrr_compute_config(struct intel_crtc_state *crtc_state,
 	struct intel_display *display = to_intel_display(crtc_state);
 	struct intel_connector *connector =
 		to_intel_connector(conn_state->connector);
-	struct intel_dp *intel_dp = intel_attached_dp(connector);
-	bool is_edp = intel_dp_is_edp(intel_dp);
+	bool is_edp = connector->base.connector_type == DRM_MODE_CONNECTOR_eDP;
 	struct drm_display_mode *adjusted_mode = &crtc_state->hw.adjusted_mode;
 	int vmin, vmax;
 
@@ -444,7 +462,9 @@ intel_vrr_compute_config(struct intel_crtc_state *crtc_state,
 	 * correctly sequence transcoder level stuff vs. pipe level stuff
 	 * in the commit.
 	 */
-	if (crtc_state->joiner_pipes)
+	if (crtc_state->joiner_pipes ||
+	    (connector->base.connector_type == DRM_MODE_CONNECTOR_HDMIA &&
+	     !crtc_state->frl.enable))
 		crtc_state->vrr.in_range = false;
 
 	vmin = intel_vrr_compute_vmin(crtc_state);
