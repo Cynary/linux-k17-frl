@@ -2610,6 +2610,8 @@ int intel_hdmi_compute_config(struct intel_encoder *encoder,
 	struct drm_scdc *scdc = &connector->base.display_info.hdmi.scdc;
 	struct intel_hdmi *intel_hdmi = enc_to_intel_hdmi(encoder);
 	bool enable_frl = false;
+	bool use_frl;
+	int target_bpp;
 	int lane_count = 4;
 	int ret;
 
@@ -2640,10 +2642,19 @@ int intel_hdmi_compute_config(struct intel_encoder *encoder,
 	    intel_hdmi->has_sink_hdmi_21)
 		enable_frl = true;
 
-	ret = intel_hdmi_compute_formats(encoder, pipe_config, conn_state, false);
+	/* Do not settle for TMDS 4:2:0 before trying full-color FRL. */
+	use_frl = enable_frl && adjusted_mode->clock > 600000;
+	target_bpp = pipe_config->pipe_bpp;
+	ret = intel_hdmi_compute_formats(encoder, pipe_config, conn_state, use_frl);
 
 	if (ret && enable_frl) {
-		ret = intel_hdmi_compute_formats(encoder, pipe_config, conn_state, true);
+		pipe_config->pipe_bpp = target_bpp;
+		memset(&pipe_config->frl, 0, sizeof(pipe_config->frl));
+		use_frl = !use_frl;
+		ret = intel_hdmi_compute_formats(encoder, pipe_config, conn_state, use_frl);
+	}
+
+	if (!ret && use_frl) {
 		drm_dbg_kms(display->drm,
 			    "Enabling FRL mode with lanes = %d rate = %d\n",
 			    pipe_config->frl.required_lanes,
