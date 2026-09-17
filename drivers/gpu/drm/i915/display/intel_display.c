@@ -4112,9 +4112,9 @@ int intel_crtc_dotclock(const struct intel_crtc_state *pipe_config)
 		u64 ftb_avg = div64_u64(div18 * pipe_config->frl.link_m,
 				      pipe_config->frl.link_n);
 
-		/* Undo the DFM 0.5% pixel clock tolerance and deep-color factor. */
-		dotclock = DIV_ROUND_CLOSEST_ULL(ftb_avg * 24 * 1000,
-					       (u64)pipe_config->pipe_bpp * 1005 * 1000);
+		/* Link M/N carries the nominal tribyte rate, including deep color. */
+		dotclock = DIV_ROUND_CLOSEST_ULL(ftb_avg * 24,
+					       (u64)pipe_config->pipe_bpp * 1000);
 	} else if (intel_crtc_has_dp_encoder(pipe_config))
 		dotclock = intel_dotclock_calculate(pipe_config->port_clock,
 						    &pipe_config->dp_m_n);

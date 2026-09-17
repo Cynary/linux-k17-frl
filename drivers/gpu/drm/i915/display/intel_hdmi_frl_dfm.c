@@ -793,7 +793,9 @@ compute_frl_mn(struct intel_crtc_state *crtc_state, u32 ftb_avg_k)
 	u64 ftb_avg, div_18_clk, gcd_val;
 	u32 link_m, link_n;
 
-	ftb_avg = ftb_avg_k * 1000;
+	/* DFM budgeting includes clock tolerance; M/N must describe nominal video. */
+	ftb_avg = DIV_ROUND_CLOSEST_ULL((u64)ftb_avg_k * 1000000,
+				      1000 + TOLERANCE_PIXEL_CLOCK);
 	div_18_clk = mult_frac(1000000000, crtc_state->frl.required_rate, 18);
 	gcd_val = gcd(ftb_avg, div_18_clk);
 
