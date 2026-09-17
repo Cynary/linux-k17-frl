@@ -5,6 +5,7 @@
 
 #include <linux/gcd.h>
 #include <linux/kernel.h>
+#include <linux/math64.h>
 
 #include <drm/drm_connector.h>
 #include <drm/drm_print.h>
@@ -84,7 +85,7 @@ static u32
 get_num_char_rc_compressible(u32 color_format, u32 bpc,
 			     u32 audio_packets_line, u32 hblank)
 {
-	u32 cfrl_free;
+	u32 cfrl_free, fixed_chars;
 	u32 kcdx100, k420;
 
 	if (color_format == DRM_OUTPUT_COLOR_FORMAT_YCBCR420)
@@ -97,8 +98,9 @@ get_num_char_rc_compressible(u32 color_format, u32 bpc,
 	else
 		kcdx100 = (100 * bpc) / 8;
 
-	cfrl_free = max(((hblank * kcdx100) / (100 * k420) - 32 * audio_packets_line - 7),
-			U32_MIN);
+	cfrl_free = (hblank * kcdx100) / (100 * k420);
+	fixed_chars = 32 * audio_packets_line + 7;
+	cfrl_free = cfrl_free > fixed_chars ? cfrl_free - fixed_chars : 0;
 
 	return cfrl_free;
 }
@@ -120,7 +122,9 @@ get_num_char_compression_savings(u32 cfrl_free)
 	 * • HSYNC trail edge not aligned to the RC Compression
 	 */
 	const u32 cfrl_margin = 4;
-	u32 cfrl_savings = max(((7 * cfrl_free) / 8) - cfrl_margin, U32_MIN);
+	u32 cfrl_savings = (7 * cfrl_free) / 8;
+
+	cfrl_savings = cfrl_savings > cfrl_margin ? cfrl_savings - cfrl_margin : 0;
 
 	return cfrl_savings;
 }
@@ -181,7 +185,7 @@ get_tactive_min(u32 num_lanes, u32 tribyte_active,
 	efficiency_k = EFFICIENCY_MULTIPLIER - overhead_max_k;
 	effective_rate_kbps = mult_frac(rate_kbps, efficiency_k, EFFICIENCY_MULTIPLIER);
 
-	return mult_frac(FRL_TIMING_NS_MULTIPLIER, active_bytes, effective_rate_kbps) / 1000;
+	return DIV_ROUND_UP_ULL((u64)1000000 * active_bytes, effective_rate_kbps);
 }
 
 /*
@@ -194,12 +198,13 @@ get_tblank_min(u32 num_lanes, u32 tribyte_blank,
 {
 	u32 blank_bytes, rate_kbps, efficiency_k, effective_rate_kbps;
 
-	blank_bytes = (3 * tribyte_blank) / 2;
+	/* Blanking control periods use one FRL character, as in utilization. */
+	blank_bytes = tribyte_blank;
 	rate_kbps = num_lanes * frl_char_min_rate_k;
 	efficiency_k = EFFICIENCY_MULTIPLIER - overhead_max_k;
 	effective_rate_kbps = mult_frac(rate_kbps, efficiency_k, EFFICIENCY_MULTIPLIER);
 
-	return mult_frac(FRL_TIMING_NS_MULTIPLIER, blank_bytes, effective_rate_kbps) / 1000;
+	return DIV_ROUND_UP_ULL((u64)1000000 * blank_bytes, effective_rate_kbps);
 }
 
 /* Collect link characteristics */
@@ -210,14 +215,13 @@ compute_link_characteristics(struct intel_hdmi_frl_dfm *frl_dfm)
 
 	/* Determine the maximum legal pixel rate */
 	frl_dfm->params.pixel_clock_max_khz =
-		(frl_dfm->config.pixel_clock_nominal_khz * (1000 + TOLERANCE_PIXEL_CLOCK)) / 1000;
+		div_u64((u64)frl_dfm->config.pixel_clock_nominal_khz *
+			(1000 + TOLERANCE_PIXEL_CLOCK), 1000);
 
 	/* Determine the minimum Video Line period */
 	line_width = frl_dfm->config.hactive + frl_dfm->config.hblank;
 
-	frl_dfm->params.line_time_ns = mult_frac(FRL_TIMING_NS_MULTIPLIER,
-						 line_width,
-						 frl_dfm->params.pixel_clock_max_khz) / 1000;
+	frl_dfm->params.line_time_ns = div_u64((u64)1000000 * line_width, frl_dfm->params.pixel_clock_max_khz);
 
 	/* Determine the worst-case slow FRL Bit Rate in kbps*/
 	frl_bit_rate_min_kbps =
@@ -266,15 +270,15 @@ compute_audio_hblank_min(struct intel_hdmi_frl_dfm *frl_dfm)
 	 * increased to maximim rate permitted by Tolerance Audio clock
 	 */
 	audio_pkt_rate =
-		((frl_dfm->config.audio_hz *  num_audio_pkt + (2 * ACR_RATE_MAX)) *
-		 (1000000 + TOLERANCE_AUDIO_CLOCK)) / 1000000;
+		div_u64(((u64)frl_dfm->config.audio_hz * num_audio_pkt + 2 * ACR_RATE_MAX) *
+			(1000000 + TOLERANCE_AUDIO_CLOCK), 1000000);
 
 	/*
 	 * Average required packets per line is
 	 * number of audio packets needed during Hblank
 	 */
 	frl_dfm->params.num_audio_pkts_line =
-		DIV_ROUND_UP(audio_pkt_rate * frl_dfm->params.line_time_ns,
+		DIV_ROUND_UP_ULL((u64)audio_pkt_rate * frl_dfm->params.line_time_ns,
 			     FRL_TIMING_NS_MULTIPLIER);
 
 	/*
@@ -319,9 +323,9 @@ verify_frl_capacity_requirement(struct intel_hdmi_frl_dfm *frl_dfm)
 
 	/* Determine the average tribyte rate in kilo tribytes per sec */
 	frl_dfm->params.ftb_avg_k =
-		(frl_dfm->params.pixel_clock_max_khz *
-		 (frl_dfm->params.tb_active + frl_dfm->params.tb_blank)) /
-		(frl_dfm->config.hactive + frl_dfm->config.hblank);
+		div_u64((u64)frl_dfm->params.pixel_clock_max_khz *
+			(frl_dfm->params.tb_active + frl_dfm->params.tb_blank),
+			frl_dfm->config.hactive + frl_dfm->config.hblank);
 
 	/*
 	 * Determine the time required to transmit the active portion of the
@@ -357,7 +361,7 @@ verify_frl_capacity_requirement(struct intel_hdmi_frl_dfm *frl_dfm)
 		tborrowed_ns = tactive_min_ns - tactive_ref_ns;
 		/* Determine the disparity in tribytes */
 		frl_dfm->params.tb_borrowed =
-			DIV_ROUND_UP((tborrowed_ns * frl_dfm->params.ftb_avg_k * 1000),
+			DIV_ROUND_UP_ULL((u64)tborrowed_ns * frl_dfm->params.ftb_avg_k * 1000,
 				     FRL_TIMING_NS_MULTIPLIER);
 
 		if (frl_dfm->params.tb_borrowed <= TB_BORROWED_MAX)
@@ -372,7 +376,7 @@ static bool
 verify_utilization_possible(struct intel_hdmi_frl_dfm *frl_dfm)
 {
 	u32 cfrl_free, cfrl_savings, frl_char_payload_actual;
-	u32 utilization, margin;
+	u32 utilization;
 
 	cfrl_free = get_num_char_rc_compressible(frl_dfm->config.color_format,
 						 frl_dfm->config.bpc,
@@ -394,12 +398,7 @@ verify_utilization_possible(struct intel_hdmi_frl_dfm *frl_dfm)
 	 */
 	utilization = (frl_char_payload_actual * EFFICIENCY_MULTIPLIER) / frl_dfm->params.cfrl_line;
 
-	margin = 1000 - (utilization + frl_dfm->params.overhead_max);
-
-	if (margin > 0)
-		return true;
-
-	return false;
+	return utilization + frl_dfm->params.overhead_max < EFFICIENCY_MULTIPLIER;
 }
 
 /* Check if DFM requirement is met */
