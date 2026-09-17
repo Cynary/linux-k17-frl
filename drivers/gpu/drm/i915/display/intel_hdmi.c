@@ -1230,30 +1230,6 @@ static void vlv_set_infoframes(struct intel_encoder *encoder,
 			      &crtc_state->infoframes.hdmi);
 }
 
-void intel_hdmi_fastset_infoframes(struct intel_encoder *encoder,
-				   const struct intel_crtc_state *crtc_state,
-				   const struct drm_connector_state *conn_state)
-{
-	struct intel_display *display = to_intel_display(encoder);
-	intel_reg_t reg = HSW_TVIDEO_DIP_CTL(display,
-					    crtc_state->cpu_transcoder);
-	u32 val = intel_de_read(display, reg);
-
-	if ((crtc_state->infoframes.enable &
-		intel_hdmi_infoframe_enable(HDMI_INFOFRAME_TYPE_DRM)) == 0 &&
-			(val & VIDEO_DIP_ENABLE_DRM_GLK) == 0)
-		return;
-
-	val &= ~(VIDEO_DIP_ENABLE_DRM_GLK);
-
-	intel_de_write(display, reg, val);
-	intel_de_posting_read(display, reg);
-
-	intel_write_infoframe(encoder, crtc_state,
-			      HDMI_INFOFRAME_TYPE_DRM,
-			      &crtc_state->infoframes.drm);
-}
-
 static void intel_hdmi_write_vtem_experiment(struct intel_encoder *encoder,
 					     const struct intel_crtc_state *crtc_state)
 {
@@ -1265,8 +1241,14 @@ static void intel_hdmi_write_vtem_experiment(struct intel_encoder *encoder,
 
 	if (!display->platform.lunarlake ||
 	    !display->params.experimental_hdmi_vrr ||
-	    !crtc_state->frl.enable || !crtc_state->vrr.enable)
+	    !crtc_state->frl.enable)
 		return;
+
+	if (!crtc_state->vrr.enable) {
+		intel_de_rmw(display, HSW_TVIDEO_DIP_CTL(display, crtc_state->cpu_transcoder),
+			     VIDEO_DIP_ENABLE_GMP_HSW, 0);
+		return;
+	}
 
 	/* Single-packet VTEM, with the Intel reserved byte at offset 3. */
 	bytes[0] = 0x7f;
@@ -1287,6 +1269,33 @@ static void intel_hdmi_write_vtem_experiment(struct intel_encoder *encoder,
 			    packet, sizeof(packet));
 	drm_info(display->drm, "K17 VRR experiment: VTEM via GMP, %d Hz base\n",
 		 refresh);
+}
+
+void intel_hdmi_fastset_infoframes(struct intel_encoder *encoder,
+				   const struct intel_crtc_state *crtc_state,
+				   const struct drm_connector_state *conn_state)
+{
+	struct intel_display *display = to_intel_display(encoder);
+	intel_reg_t reg = HSW_TVIDEO_DIP_CTL(display,
+					    crtc_state->cpu_transcoder);
+	u32 val;
+
+	intel_hdmi_write_vtem_experiment(encoder, crtc_state);
+	val = intel_de_read(display, reg);
+
+	if ((crtc_state->infoframes.enable &
+		intel_hdmi_infoframe_enable(HDMI_INFOFRAME_TYPE_DRM)) == 0 &&
+			(val & VIDEO_DIP_ENABLE_DRM_GLK) == 0)
+		return;
+
+	val &= ~(VIDEO_DIP_ENABLE_DRM_GLK);
+
+	intel_de_write(display, reg, val);
+	intel_de_posting_read(display, reg);
+
+	intel_write_infoframe(encoder, crtc_state,
+			      HDMI_INFOFRAME_TYPE_DRM,
+			      &crtc_state->infoframes.drm);
 }
 
 static void hsw_set_infoframes(struct intel_encoder *encoder,
