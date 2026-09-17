@@ -2791,9 +2791,11 @@ intel_hdmi_init_frl_config(struct intel_connector *connector)
 	int max_src_frl_rate =
 		DIV_ROUND_UP(intel_bios_hdmi_max_frl_rate(encoder), 1000000) * 4;
 	int max_sink_dsc_frl_rate =
-		intel_hdmi_sink_dsc_max_frl_rate(&connector->base);
+		(connector->base.display_info.hdmi.dsc_cap.max_lanes *
+		 connector->base.display_info.hdmi.dsc_cap.max_frl_rate_per_lane);
 	int max_sink_frl_rate =
-		intel_hdmi_sink_max_frl_rate(&connector->base);
+		(connector->base.display_info.hdmi.max_lanes *
+		 connector->base.display_info.hdmi.max_frl_rate_per_lane);
 	int max_frl_rate, max_dsc_frl_rate;
 
 	intel_hdmi->has_sink_hdmi_21 = max_sink_frl_rate > 0;
