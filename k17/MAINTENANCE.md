@@ -1,6 +1,6 @@
 # Maintaining HDMI FRL/VRR until upstream support replaces this fork
 
-Status: proposed plan, September 17, 2026. Only the source archive, test baseline and prototype full-kernel build exist today. No automatic update service, production image, DKMS package or akmod package is installed by this plan.
+Status: implementation started September 18, 2026. The stock-kernel module-pair image is implemented in [Cynary/bazzite-k17](https://github.com/Cynary/bazzite-k17), with pinned inputs, a GitHub Actions build, and signed GHCR candidates. See its [validation record](https://github.com/Cynary/bazzite-k17/blob/main/VALIDATION.md) for actual boot and hardware results. No stable channel, unattended promotion, DKMS package or akmod source RPM is enabled.
 
 ## Recommendation
 
@@ -12,7 +12,7 @@ Universal Blue already builds/caches matching kernel and kmod RPMs in [akmods](h
 
 In principle, yes: DKMS runs a module build/install recipe for each kernel. It does not adapt patches to new APIs, establish ABI compatibility, fix an in-tree driver's build assumptions, or validate display behavior. The kernel explicitly does not promise a [stable internal driver API](https://docs.kernel.org/process/stable-api-nonsense.html).
 
-This patch stack changes 27 files, including the shared Intel display code under `i915/display` that is compiled into Xe, plus `drm_scdc_helper.c` compiled into `drm_display_helper.ko`. It adds exported SCDC helpers used by Xe. **A patched xe.ko against the unchanged stock helper module is insufficient for this stack.** Today's live-module tests used an already patched full kernel, so they do not establish stock-kernel module-only compatibility.
+This patch stack changes 27 files, including the shared Intel display code under `i915/display` that is compiled into Xe, plus `drm_scdc_helper.c` compiled into `drm_display_helper.ko`. It adds exported SCDC helpers used by Xe. **A patched xe.ko against the unchanged stock helper module is insufficient for this stack.** The original live-module tests used an already patched full kernel. Subsequent stock-kernel image tests are documented separately in the image repository; do not inherit their qualification from the full-kernel baseline.
 
 | Approach | Benefit | Remaining cost / decision |
 |---|---|---|
@@ -31,7 +31,7 @@ Akmods and DKMS are build automation, not automatic compatibility. An akmod sour
 5. Boot that candidate with the stock kernel and validate the hardware matrix below. Confirm xone/xpadneo and other required stock modules still work. Initially limit the image to this Xe/Lunar Lake machine; other shared-helper consumers need their own validation.
 6. If successful, use this route for production candidates. If the scope expands into broad DRM core backports or requires fragile source surgery, stop the module-only effort and use the full-kernel route.
 
-Success criterion: the same display behavior on the *unmodified stock kernel*, with the exact matched replacements, normal boot and rollback, no new warnings, and retained controller support. This experiment is not yet done.
+Success criterion: the same display behavior on the *unmodified stock kernel*, with the exact matched replacements, normal boot and rollback, no new warnings, and retained controller support. Track each part in the image repository's validation record; compilation and module loading alone do not meet this criterion.
 
 ## Phase 2 — automate complete candidate images
 
