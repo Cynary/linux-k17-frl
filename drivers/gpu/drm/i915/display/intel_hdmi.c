@@ -4135,6 +4135,15 @@ ltsl_tmds_mode:
 			connector->base.id, connector->name,
 			req_rate);
 
+	/*
+	 * Stop sending training patterns so that the transcoder can run while
+	 * userspace recovers the failed link. This does not mark the sink link
+	 * as trained; the failure is still returned to the caller.
+	 */
+	intel_de_rmw(display,
+		     TRANS_HDMI_FRL_CFG(display, crtc_state->cpu_transcoder),
+		     0, TRANS_HDMI_FRL_TRAINING_COMPLETE);
+
 	return -EINVAL;
 }
 

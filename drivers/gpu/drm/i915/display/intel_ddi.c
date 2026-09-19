@@ -3592,10 +3592,13 @@ static void intel_ddi_enable_hdmi(struct intel_atomic_state *state,
 	if (DISPLAY_VER(display) >= 14) {
 		if (crtc_state->frl.enable &&
 		    intel_hdmi_start_frl(encoder, crtc_state) < 0) {
-			intel_hdmi_disable_frl(encoder, crtc_state);
+			/*
+			 * The atomic commit still needs a running transcoder and
+			 * vblank events even if the sink cannot receive the stream.
+			 * Leave FRL configured until the normal disable sequence
+			 * and let userspace retry the failed link.
+			 */
 			schedule_work(&intel_connector->modeset_retry_work);
-
-			return;
 		}
 		intel_hdmi_frl_cfg_write(crtc_state);
 		intel_hdmi_frl_dfm_write(crtc_state);
